@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ csrf_token() }}">
+  <title>Amazon Price Monitoring for Home Assistant</title>
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
+  <style>
+    :root {
+      color-scheme: light;
+      --amazon-navy: #232F3E;
+      --amazon-orange: #FF9900;
+      --amazon-orange-dark: #E47911;
+      --amazon-link: #007185;
+      --amazon-bg: #EAEDED;
+    }
+    body { font-family: system-ui, sans-serif; margin: 0 auto; max-width: 1100px; padding: 0 1rem 2rem; background: var(--amazon-bg); color: #0f1111; }
+    .amazon-header {
+      background: var(--amazon-navy);
+      color: #fff;
+      padding: 0.9rem 1rem;
+      display: flex;
+      align-items: center;
+      gap: 1.25rem;
+      margin: 1rem 0 1.25rem;
+      border-radius: 6px;
+    }
+    .amazon-brand { display: flex; flex-direction: column; line-height: 1; }
+    .amazon-wordmark { font-weight: 700; font-size: 1.55rem; color: #fff; }
+    .amazon-smile { display: block; width: 3.9em; height: auto; margin-top: 2px; }
+    .amazon-smile path { stroke: var(--amazon-orange); fill: none; }
+    .amazon-smile .curve { stroke-width: 2.4; stroke-linecap: round; }
+    .amazon-smile .arrow { stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+    .amazon-title { font-size: 1.3rem; font-weight: 400; }
+    table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #d5dbdb; }
+    th, td { border: 1px solid #d5dbdb; padding: 0.4rem 0.6rem; text-align: left; vertical-align: top; font-size: 0.85rem; }
+    th { background: #f0f2f2; color: #0f1111; }
+    th.editable, td.editable { background: #fff8e1; }
+    input[type="text"], input[type="number"] { width: 100%; box-sizing: border-box; font-size: 0.85rem; border: 1px solid #888c8c; border-radius: 3px; padding: 2px 4px; }
+    input[type="text"]:focus, input[type="number"]:focus { outline: none; border-color: var(--amazon-link); box-shadow: 0 0 0 2px rgba(0, 113, 133, 0.25); }
+    td.right, th.right { text-align: right; }
+    td.right input { text-align: right; }
+    td.center, th.center { text-align: center; }
+    button.icon {
+      display: inline-flex; align-items: center; justify-content: center;
+      padding: 3px; cursor: pointer;
+      background: var(--amazon-orange); border: 1px solid #b06a00; border-radius: 4px; color: var(--amazon-navy);
+    }
+    button.icon:hover { background: var(--amazon-orange-dark); }
+    button.icon:active { transform: translateY(1px); }
+    button.icon svg { width: 16px; height: 16px; display: block; pointer-events: none; }
+    .add-form button.icon { padding: 6px 10px; }
+    .add-form button.icon svg { width: 18px; height: 18px; }
+    .actions { white-space: nowrap; }
+    td.move { width: 1%; white-space: nowrap; text-align: center; }
+    .grip {
+      display: inline-flex; align-items: center; justify-content: center;
+      padding: 3px; cursor: grab; vertical-align: middle;
+      background: transparent; border: none; border-radius: 4px; color: #565959;
+    }
+    .grip:active { cursor: grabbing; }
+    .grip:hover { background: rgba(0, 0, 0, 0.08); color: var(--amazon-navy); }
+    .grip svg { width: 14px; height: 14px; display: block; pointer-events: none; }
+    .move-btn {
+      display: none;
+      align-items: center; justify-content: center;
+      padding: 7px; cursor: pointer; vertical-align: middle;
+      background: transparent; border: none; border-radius: 4px; color: #565959;
+    }
+    .move-btn:hover { background: rgba(0, 0, 0, 0.08); color: var(--amazon-navy); }
+    .move-btn svg { width: 18px; height: 18px; display: block; pointer-events: none; }
+    tr.dragging { opacity: 0.4; }
+    tr.drag-target td { border-top: 2px solid var(--amazon-link); }
+    .flash { padding: 0.5rem 0.75rem; margin-bottom: 0.5rem; border-radius: 4px; }
+    .flash.success { background: rgba(0, 128, 0, 0.12); border: 1px solid #067d62; color: #0f1111; }
+    .flash.error { background: rgba(255, 0, 0, 0.1); border: 1px solid #c40000; color: #0f1111; }
+    .monitor-controls {
+      display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;
+      background: #fff; border: 1px solid #d5dbdb; border-radius: 6px;
+      padding: 0.6rem 0.75rem; margin-bottom: 1rem; font-size: 0.85rem;
+    }
+    .monitor-controls .status { display: inline-flex; align-items: center; gap: 0.45rem; font-weight: 700; color: var(--amazon-navy); }
+    .status .dot { width: 10px; height: 10px; border-radius: 50%; background: #cc0c39; flex-shrink: 0; }
+    .status.running .dot { background: #067d62; }
+    button.icon:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
+    .interval-form { display: inline-flex; align-items: center; gap: 0.4rem; margin-left: auto; }
+    .interval-form label { font-weight: 700; color: var(--amazon-navy); }
+    .interval-form input[type="number"] { width: 5.5rem; }
+    .interval-form input[type="text"] { width: 14rem; }
+    .monitor-controls .spacer { flex: 1 1 100%; }
+    a.link-btn {
+      display: inline-flex; align-items: center;
+      padding: 4px 10px; text-decoration: none; font-size: 0.85rem;
+      background: var(--amazon-orange); border: 1px solid #b06a00; border-radius: 4px; color: var(--amazon-navy);
+    }
+    a.link-btn:hover { background: var(--amazon-orange-dark); }
+    .import-form { display: inline-flex; align-items: center; gap: 0.4rem; }
+    .import-form input[type="file"] { font-size: 0.78rem; max-width: 15rem; }
+    @media (max-width: 600px) {
+      .monitor-controls .spacer { display: none; }
+      .interval-form { margin-left: 0; }
+      .import-form input[type="file"] { max-width: 11rem; }
+    }
+    .add-form { display: flex; gap: 0.5rem; margin-top: 1rem; align-items: center; background: #fff; padding: 0.75rem; border: 1px solid #d5dbdb; border-radius: 6px; }
+    .add-form label { font-weight: 700; color: var(--amazon-navy); }
+    .add-form input { flex: 1; padding: 4px 6px; }
+    td.title-col { max-width: 340px; overflow-wrap: anywhere; }
+    a { color: var(--amazon-link); }
+    .table-wrap { overflow-x: auto; }
+    .instructions {
+      background: #fff; border: 1px solid #d5dbdb; border-radius: 6px;
+      padding: 0.75rem 1rem; margin-bottom: 1rem; font-size: 0.85rem;
+    }
+    .instructions h2 { font-size: 1rem; margin: 0 0 0.4rem; color: var(--amazon-navy); }
+    .instructions ul { margin: 0; padding-left: 1.2rem; }
+    .instructions li { margin: 0.25rem 0; }
+
+    @media (max-width: 600px) {
+      .amazon-header { flex-direction: column; align-items: flex-start; gap: 0.5rem; }
+      .amazon-title { font-size: 1.1rem; }
+    }
+
+    @media (max-width: 720px) {
+      .table-wrap { overflow-x: visible; }
+      table, thead, tbody { display: block; }
+      thead { display: none; }
+      table { width: 100%; border: none; background: none; margin-top: 0.5rem; }
+      tr {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-areas:
+          "title price"
+          "url url"
+          "thresh thresh"
+          "topic topic"
+          "met stock"
+          "time time"
+          "move actions";
+        gap: 0.4rem 0.9rem;
+        align-items: center;
+        background: #fff;
+        border: 1px solid #d5dbdb;
+        border-radius: 8px;
+        margin-bottom: 0.75rem;
+        padding: 0.6rem 0.8rem;
+        box-sizing: border-box;
+      }
+      td { display: block; border: none; padding: 0.1rem 0; min-width: 0; }
+      td::before {
+        content: attr(data-label);
+        display: block;
+        font-size: 0.65rem;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        color: #565959;
+        margin-bottom: 1px;
+      }
+      .grip { display: none; }
+      .move-btn { display: inline-flex; }
+      td.move { grid-area: move; display: flex; gap: 0.4rem; align-items: center; }
+      td.move::before { display: none; }
+      td.title-col {
+        grid-area: title;
+        font-weight: 600;
+        overflow-wrap: anywhere;
+      }
+      td.title-col::before { display: none; }
+      td[data-label="Current Price"] {
+        grid-area: price;
+        justify-self: end;
+        align-self: start;
+        font-size: 1.15rem;
+        font-weight: 700;
+        color: var(--amazon-orange-dark);
+        white-space: nowrap;
+        text-align: right;
+      }
+      td[data-label="Current Price"]::before { display: none; }
+      td.editable { background: #fff8e1; border-radius: 4px; padding: 0.3rem 0.4rem; }
+      td[data-label="URL"] { grid-area: url; }
+      td[data-label="Threshold"] { grid-area: thresh; }
+      td[data-label="MQTT Topic"] { grid-area: topic; }
+      td[data-label="Target Met"] { grid-area: met; }
+      td[data-label="In Stock"] { grid-area: stock; justify-self: end; }
+      td[data-label="Time Stamp"] { grid-area: time; }
+      td[data-label="Actions"]::before { display: none; }
+      td.actions { grid-area: actions; justify-self: end; display: flex; gap: 0.5rem; }
+      .add-form { flex-direction: column; align-items: stretch; }
+      .add-form button.icon { align-self: flex-start; }
+    }
+  </style>
+</head>
+<body>
+  <header class="amazon-header">
+    <div class="amazon-brand">
+      <span class="amazon-wordmark">amazon</span>
+      <svg class="amazon-smile" viewBox="0 0 80 14" aria-hidden="true">
+        <path class="curve" d="M4 11 C 10 15, 18 16, 26 15.2 C 38 13.5, 50 8.5, 56 6.5 C 60 5.4, 64 5.2, 70 6.4"/>
+        <path class="arrow" d="M67.5 3.4 L 71.5 6.4 L 66.8 7.8"/>
+      </svg>
+    </div>
+    <h1 class="amazon-title">Price Monitoring for Home Assistant</h1>
+  </header>
+
+  <div class="monitor-controls">
+    <span class="status {{ 'running' if monitor.running else 'stopped' }}" id="monitor-status-label">
+      <span class="dot"></span>
+      <span id="monitor-status-text">{% if monitor.running %}Running &middot; pid {{ monitor.pid }}{% else %}Stopped{% endif %}</span>
+    </span>
+    <form method="post" action="{{ url_for('start_monitor') }}">
+      <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="icon" id="btn-start" {% if monitor.running %}disabled{% endif %}>Start</button>
+    </form>
+    <form method="post" action="{{ url_for('stop_monitor') }}">
+      <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="icon" id="btn-stop" {% if not monitor.running %}disabled{% endif %}>Stop</button>
+    </form>
+    <form method="post" action="{{ url_for('check_now_route') }}">
+      <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="icon" id="btn-checknow" {% if monitor.checking %}disabled{% endif %}>{% if monitor.checking %}Checking&hellip;{% else %}Check now{% endif %}</button>
+    </form>
+    <form method="post" action="{{ url_for('save_settings_route') }}" class="interval-form">
+      <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+      <label for="check-interval">Check every</label>
+      <input type="number" id="check-interval" name="interval" min="0.5" step="0.5" value="{{ monitor.interval_display }}" required>
+      <span>min</span>
+      <label for="mqtt-host">MQTT host</label>
+      <input type="text" id="mqtt-host" name="mqtt_host" value="{{ monitor.mqtt_host }}" placeholder="broker address (empty = off)">
+      <button type="submit" class="icon">Save</button>
+    </form>
+    <span class="spacer"></span>
+    <a class="icon link-btn" href="{{ url_for('export_csv') }}" id="btn-export">Export CSV</a>
+    <form method="post" action="{{ url_for('import_csv') }}" enctype="multipart/form-data" class="import-form">
+      <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+      <input type="file" name="csv_file" accept=".csv,text/csv" required>
+      <button type="submit" class="icon">Import CSV</button>
+    </form>
+  </div>
+
+  <div class="instructions">
+    <h2>How to use this page</h2>
+    <ul>
+    <li><strong>Monitor controls:</strong> press <strong>Start</strong> to run the price checker continuously in the background. It repeats every N minutes (adjustable in the bar above, default 30) and keeps running even if you close this page; output goes to <em>config/monitor.log</em>. The <strong>MQTT host</strong> box sets where readings are published (defaults to the container's <em>MQTT_HOST</em> variable; empty turns publishing off). <strong>Check now</strong> runs a single pass immediately without disturbing the schedule. Press <strong>Stop</strong> to end it.</li>
+    <li><strong>Add a product:</strong> paste any Amazon URL into the "URL" box at the bottom (long links are fine &mdash; they're shortened automatically), set your target price as the "Threshold", give the MQTT topic a name (e.g. <em>garden_kneeler</em>) &mdash; the <em>price_monitor/</em> prefix is added for you if you leave it off &mdash; and press the <strong>+</strong> button. The title and current price are fetched from the page right away.</li>
+      <li><strong>Edit:</strong> change the URL, Threshold or MQTT Topic directly in the table, then press the floppy-disk <strong>Save</strong> icon to keep your changes.</li>
+      <li><strong>Reorder:</strong> on a computer, drag a row by its grip handle (&#8801;) to move it; on a phone or tablet, use the up/down arrow buttons at the bottom of each row. The new order is saved to the CSV.</li>
+      <li><strong>Remove:</strong> press the trash-can <strong>Delete</strong> icon on a row to stop monitoring it (you'll be asked to confirm first).</li>
+      <li><strong>Target Met</strong> shows <em>Yes</em> once the current price drops below the Threshold &mdash; this is what Home Assistant sees.</li>
+      <li><strong>MQTT Topic</strong> is the topic this row's readings are published to in Home Assistant. It's pre-filled when you add a row &mdash; change it if you want a different topic (no spaces, <em>#</em> or <em>+</em> allowed).</li>
+      <li>The <em>Title</em>, <em>Current Price</em>, <em>Target Met</em>, <em>Time Stamp</em> and <em>In Stock</em> columns are updated automatically by the background monitor script, so they're read-only here.</li>
+    </ul>
+  </div>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for category, message in messages %}
+      <div class="flash {{ category }}">{{ message }}</div>
+    {% endfor %}
+  {% endwith %}
+
+  <div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Move</th>
+        <th class="editable">URL</th>
+        <th class="editable right">Threshold</th>
+        <th class="editable">MQTT Topic</th>
+        {% for name in fieldnames if name not in ("URL", "Threshold", "MQTTTopic") %}
+          <th {% if name == "CurrentPrice" %}class="right"{% elif name in ("TargetMet", "InStock") %}class="center"{% endif %}>{{ name | display_name }}</th>
+        {% endfor %}
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody id="rows-tbody">
+      {% for row in rows %}
+      <tr data-index="{{ loop.index0 }}" data-title="{{ row['Title'] }}">
+        <td class="move" data-label="Move">
+          <button type="button" class="grip" draggable="true" title="Drag to reorder" aria-label="Drag to reorder">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/></svg>
+          </button>
+          <button type="button" class="move-btn" onclick="moveRow(this, -1)" title="Move up" aria-label="Move up">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
+          </button>
+          <button type="button" class="move-btn" onclick="moveRow(this, 1)" title="Move down" aria-label="Move down">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+        </td>
+        <td class="editable" data-label="URL">
+          <input form="row-{{ loop.index0 }}" type="text" name="url" value="{{ row['URL'] }}">
+        </td>
+        <td class="editable right" data-label="Threshold">
+          <input form="row-{{ loop.index0 }}" type="number" step="0.01" name="threshold" value="{{ row['Threshold'] }}">
+        </td>
+        <td class="editable" data-label="MQTT Topic">
+          <input form="row-{{ loop.index0 }}" type="text" name="mqtt_topic" value="{{ row['MQTTTopic'] }}">
+        </td>
+        {% for name in fieldnames if name not in ("URL", "Threshold", "MQTTTopic") %}
+          <td {% if name == "CurrentPrice" %}class="right"{% elif name in ("TargetMet", "InStock") %}class="center"{% elif name == "Title" %}class="title-col"{% endif %} data-label="{{ name | display_name }}">{{ row[name] }}</td>
+        {% endfor %}
+        <td class="actions" data-label="Actions">
+          <form id="row-{{ loop.index0 }}" method="post"
+                action="{{ url_for('edit_row', index=loop.index0) }}">
+            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+          </form>
+          <button form="row-{{ loop.index0 }}" type="submit" class="icon" title="Save" aria-label="Save">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+          </button>
+          <form class="delete-form" method="post" action="{{ url_for('delete_row', index=loop.index0) }}">
+            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="icon" title="Delete" aria-label="Delete">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+            </button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+
+  <form class="add-form" method="post" action="{{ url_for('add_row') }}">
+    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+    <label for="url">URL</label>
+    <input type="text" id="url" name="url" required>
+    <label for="threshold">Threshold</label>
+    <input type="number" id="threshold" name="threshold" step="0.01" required>
+    <label for="mqtt_topic">MQTT Topic</label>
+    <input type="text" id="mqtt_topic" name="mqtt_topic" placeholder="e.g. garden_kneeler" required>
+    <button type="submit" class="icon" title="Add" aria-label="Add">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    </button>
+  </form>
+
+  <script>
+    const tbody = document.getElementById("rows-tbody");
+    const csrfToken = document.querySelector('meta[name="csrf-token"]').content;
+    let dragRow = null;
+
+    function submitOrder() {
+      const order = [...tbody.querySelectorAll("tr")].map(tr => parseInt(tr.dataset.index, 10));
+      fetch("/reorder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+        body: JSON.stringify({ order: order })
+      })
+        .then(() => location.reload())
+        .catch(() => location.reload());
+    }
+
+    document.querySelectorAll("form.delete-form").forEach(form => {
+      form.addEventListener("submit", e => {
+        const tr = form.closest("tr");
+        const title = tr ? tr.dataset.title.trim() : "";
+        if (!confirm(title ? `Delete "${title}"?` : "Delete this row?")) {
+          e.preventDefault();
+        }
+      });
+    });
+
+    function moveRow(button, delta) {
+      const tr = button.closest("tr");
+      const rows = [...tbody.querySelectorAll("tr")];
+      const pos = rows.indexOf(tr);
+      const target = pos + delta;
+      if (target < 0 || target >= rows.length) return;
+      tbody.insertBefore(tr, delta > 0 ? rows[target].nextSibling : rows[target]);
+      submitOrder();
+    }
+
+    document.querySelectorAll(".grip").forEach(grip => {
+      grip.addEventListener("dragstart", e => {
+        dragRow = grip.closest("tr");
+        dragRow.classList.add("dragging");
+        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.setData("text/plain", "");
+      });
+      grip.addEventListener("dragend", () => {
+        if (dragRow) dragRow.classList.remove("dragging");
+        dragRow = null;
+      });
+    });
+
+    tbody.addEventListener("dragover", e => {
+      e.preventDefault();
+      if (!dragRow) return;
+      const tr = e.target.closest("tr");
+      if (!tr || tr === dragRow) return;
+      const rect = tr.getBoundingClientRect();
+      const after = (e.clientY - rect.top) > rect.height / 2;
+      tbody.insertBefore(dragRow, after ? tr.nextSibling : tr);
+    });
+
+    tbody.addEventListener("drop", e => {
+      e.preventDefault();
+      if (dragRow) submitOrder();
+    });
+
+    let lastCsvMtime = {{ monitor.csv_mtime | round(3) }};
+    const EDITING_TAGS = new Set(["INPUT", "TEXTAREA", "SELECT"]);
+
+    function refreshMonitorStatus() {
+      fetch("/monitor/status")
+        .then(r => r.json())
+        .then(s => {
+          const label = document.getElementById("monitor-status-label");
+          const text = document.getElementById("monitor-status-text");
+          const startBtn = document.getElementById("btn-start");
+          const stopBtn = document.getElementById("btn-stop");
+          const checkBtn = document.getElementById("btn-checknow");
+          if (!label || !text || !startBtn || !stopBtn || !checkBtn) return;
+          label.classList.toggle("running", s.running);
+          text.innerHTML = s.running ? "Running &middot; pid " + s.pid : "Stopped";
+          startBtn.disabled = s.running;
+          stopBtn.disabled = !s.running;
+          checkBtn.disabled = s.checking;
+          checkBtn.innerHTML = s.checking ? "Checking&hellip;" : "Check now";
+          const newMtime = s.csv_mtime ? Number(s.csv_mtime.toFixed(3)) : 0;
+          if (newMtime && newMtime !== lastCsvMtime) {
+            const el = document.activeElement;
+            if (!el || !EDITING_TAGS.has(el.tagName)) {
+              location.reload();
+              return;
+            }
+          } else {
+            lastCsvMtime = newMtime;
+          }
+        })
+        .catch(() => {});
+    }
+    setInterval(refreshMonitorStatus, 5000);
+  </script>
+</body>
+</html>

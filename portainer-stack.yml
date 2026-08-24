@@ -1,0 +1,21 @@
+services:
+  price-monitor:
+    image: ghcr.io/anthonywjb/amazon-price-monitor:latest
+    container_name: price-monitor
+    ports:
+      - "5020:5020"
+    volumes:
+      # named volume: no host folders to create, permissions just work.
+      # Prefer files on the host? Swap the line below for:
+      #   - /opt/price-monitor/config:/app/config
+      # (and run: sudo mkdir -p /opt/price-monitor/config &&
+      #            sudo chown -R 1000:1000 /opt/price-monitor/config)
+      - price-monitor-config:/app/config
+    environment:
+      - SECRET_KEY=${SECRET_KEY}
+      - MQTT_HOST=${MQTT_HOST}
+      - AUTO_START=${AUTO_START:-1}
+    restart: unless-stopped
+
+volumes:
+  price-monitor-config:

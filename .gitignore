@@ -1,0 +1,15 @@
+# python
+.venv/
+__pycache__/
+*.pyc
+
+# personal data & runtime artifacts
+config/
+*.lock
+*.log
+apm.tar.gz
+
+# editors / os
+.vscode/
+.idea/
+.DS_Store

@@ -1,0 +1,23 @@
+services:
+  price-monitor:
+    build: .
+    image: amazon-price-monitor
+    container_name: price-monitor
+    ports:
+      - "5020:5020"
+    volumes:
+      # named volume: zero host-side setup, correct permissions automatically.
+      # To keep data in a visible host folder instead, comment the line above
+      # and uncomment below (then: sudo mkdir -p /opt/price-monitor/config &&
+      # sudo chown -R 1000:1000 /opt/price-monitor/config)
+      # - /opt/price-monitor/config:/app/config
+      - price-monitor-config:/app/config
+    environment:
+      # generate once with: python -c "import secrets; print(secrets.token_hex(32))"
+      SECRET_KEY: ${SECRET_KEY:-}
+      MQTT_HOST: ${MQTT_HOST:-}
+      AUTO_START: ${AUTO_START:-1}
+    restart: unless-stopped
+
+volumes:
+  price-monitor-config:

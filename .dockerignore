@@ -1,0 +1,9 @@
+.git/
+.venv/
+__pycache__/
+*.pyc
+config/
+flask.log
+Dockerfile
+docker-compose.yml
+.dockerignore
