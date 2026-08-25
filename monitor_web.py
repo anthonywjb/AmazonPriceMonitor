@@ -24,13 +24,17 @@ from flask import (
 
 from price_monitor import (
     ASIN_RE,
+    AVAILABILITY_TOPIC_SUFFIX,
     CSV_PATH,
+    MQTT_DISCOVERY_PREFIX,
     MQTT_TOPIC_PREFIX,
     REQUIRED_COLUMNS,
+    STOCK_TOPIC_SUFFIX,
     ensure_columns,
     get_page_data,
     item_id,
     locked_csv,
+    mqtt_publish,
     read_csv,
     write_csv,
 )
@@ -577,11 +581,33 @@ def delete_row(index):
                 flash("Row not found.", "error")
                 return redirect(url_for("index"))
 
-            rows.pop(index)
+            row = rows.pop(index)
             write_csv(CSV_PATH, fieldnames, rows)
     except OSError as error:
         flash(CSV_WRITE_ERROR.format(error=error), "error")
         return redirect(url_for("index"))
+
+    try:
+        url = (row.get("URL") or "").strip()
+        topic = (row.get("MQTTTopic") or "").strip() or (
+            f"{MQTT_TOPIC_PREFIX}/{item_id(url)}" if url else None
+        )
+        if topic:
+            asin = item_id(url) if url else None
+            mqtt_publish(topic, "")
+            mqtt_publish(topic + AVAILABILITY_TOPIC_SUFFIX, "")
+            mqtt_publish(topic + STOCK_TOPIC_SUFFIX, "")
+            if asin:
+                mqtt_publish(
+                    f"{MQTT_DISCOVERY_PREFIX}/sensor/apm/{asin}/config", ""
+                )
+                mqtt_publish(
+                    f"{MQTT_DISCOVERY_PREFIX}/binary_sensor/apm/{asin}/config",
+                    "",
+                )
+    except Exception:
+        pass
+
     flash("Row deleted.", "success")
     return redirect(url_for("index"))
 
