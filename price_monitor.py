@@ -294,7 +294,7 @@ def publish_discovery(asin, title, threshold, target_met, state_topic, in_stock)
         "payload_not_available": "offline",
         "device": {
             "identifiers": ["apm"],
-            "name": "Amazon Price Monitor",
+            "name": "APM",
             "manufacturer": "Amazon",
             "model": "Amazon.co.uk",
         },
@@ -321,7 +321,7 @@ def publish_stock_discovery(asin, state_topic):
         "payload_off": "OFF",
         "device": {
             "identifiers": ["apm"],
-            "name": "Amazon Price Monitor",
+            "name": "APM",
             "manufacturer": "Amazon",
             "model": "Amazon.co.uk",
         },
