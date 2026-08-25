@@ -275,6 +275,11 @@ def edit_row(index):
                 flash("Row not found.", "error")
                 return redirect(url_for("index"))
 
+            old_url = (rows[index].get("URL") or "").strip()
+            old_topic = (rows[index].get("MQTTTopic") or "").strip() or (
+                f"{MQTT_TOPIC_PREFIX}/{item_id(old_url)}" if old_url else ""
+            )
+
             rows[index]["URL"] = url
             rows[index]["Threshold"] = threshold
             rows[index]["MQTTTopic"] = topic
@@ -282,6 +287,93 @@ def edit_row(index):
     except OSError as error:
         flash(CSV_WRITE_ERROR.format(error=error), "error")
         return redirect(url_for("index"))
+
+    try:
+        old_asin = item_id(old_url) if old_url else None
+        new_asin = item_id(url) if url else None
+        target_met = False
+        in_stock = False
+        price_str = ""
+        title = ""
+        try:
+            title, price, in_stock = get_page_data(url)
+            target_met = in_stock and price < float(threshold)
+            if in_stock:
+                price_str = f"{price:.2f}"
+        except Exception:
+            pass
+        name = topic.rstrip("/").rsplit("/", 1)[-1]
+
+        if old_topic and old_topic != topic:
+            _mqtt_publish(old_topic, "")
+            _mqtt_publish(old_topic + AVAILABILITY_TOPIC_SUFFIX, "")
+            _mqtt_publish(old_topic + STOCK_TOPIC_SUFFIX, "")
+        if old_asin and old_asin != new_asin:
+            _mqtt_publish(
+                f"{MQTT_DISCOVERY_PREFIX}/sensor/apm/{old_asin}/config", ""
+            )
+            _mqtt_publish(
+                f"{MQTT_DISCOVERY_PREFIX}/binary_sensor/apm/{old_asin}/config",
+                "",
+            )
+
+        _mqtt_publish(
+            f"{MQTT_DISCOVERY_PREFIX}/sensor/apm/{new_asin}/config",
+            json.dumps({
+                "name": name,
+                "object_id": f"apm_{name}",
+                "unique_id": f"apm_{new_asin}",
+                "state_topic": topic,
+                "json_attributes_topic": f"{topic}/attributes",
+                "unit_of_measurement": "GBP",
+                "device_class": "monetary",
+                "icon": "mdi:tag-check" if target_met else "mdi:tag",
+                "availability_topic": topic + AVAILABILITY_TOPIC_SUFFIX,
+                "payload_available": "online",
+                "payload_not_available": "offline",
+                "device": {
+                    "identifiers": ["apm"],
+                    "name": "APM",
+                    "manufacturer": "Amazon",
+                    "model": "Amazon.co.uk",
+                },
+            }),
+        )
+        _mqtt_publish(
+            f"{MQTT_DISCOVERY_PREFIX}/binary_sensor/apm/{new_asin}/config",
+            json.dumps({
+                "name": f"{name} in stock",
+                "unique_id": f"apm_{new_asin}_stock",
+                "object_id": f"apm_{name}_stock",
+                "state_topic": topic + STOCK_TOPIC_SUFFIX,
+                "payload_on": "ON",
+                "payload_off": "OFF",
+                "device": {
+                    "identifiers": ["apm"],
+                    "name": "APM",
+                    "manufacturer": "Amazon",
+                    "model": "Amazon.co.uk",
+                },
+            }),
+        )
+        _mqtt_publish(topic + AVAILABILITY_TOPIC_SUFFIX, "online")
+        _mqtt_publish(
+            topic + STOCK_TOPIC_SUFFIX, "ON" if in_stock else "OFF"
+        )
+        if in_stock and price_str:
+            _mqtt_publish(topic, price_str)
+        _mqtt_publish(
+            f"{topic}/attributes",
+            json.dumps({
+                "title": title,
+                "threshold": f"{float(threshold):.2f}",
+                "target_met": target_met,
+                "in_stock": "Yes" if in_stock else "No",
+            }),
+        )
+    except Exception:
+        pass
+
     flash("Row updated.", "success")
     return redirect(url_for("index"))
 
