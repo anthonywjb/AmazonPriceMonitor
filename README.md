@@ -60,11 +60,12 @@ Check it arrived: `docker images | grep amazon-price-monitor`
          - "5020:5020"
        volumes:
          - price-monitor-config:/app/config
-       environment:
-         - SECRET_KEY=${SECRET_KEY}
-         - MQTT_HOST=${MQTT_HOST}
-         - AUTO_START=${AUTO_START:-1}
-       restart: unless-stopped
+        environment:
+          - SECRET_KEY=${SECRET_KEY}
+          - MQTT_HOST=${MQTT_HOST}
+          - AUTO_START=${AUTO_START:-1}
+          - TZ=Europe/London
+        restart: unless-stopped
 
    volumes:
      price-monitor-config:
@@ -146,6 +147,7 @@ in the old setup, then **Import CSV** in the new one.
 | `SECRET_KEY` | random  | Session signing; set a fixed value so settings survive restarts |
 | `AUTO_START` | `1`     | Start the checker when the container boots         |
 | `MQTT_HOST`  | *(off)* | Broker hostname; can also be set later in the web UI |
+| `TZ`         | UTC     | Container timezone; set to `Europe/London` (or similar) for correct timestamps |
 | `PORT`       | `5020`  | Web UI port inside the container                   |
 
 ## Troubleshooting
