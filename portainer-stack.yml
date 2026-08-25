@@ -15,6 +15,7 @@ services:
       - SECRET_KEY=${SECRET_KEY}
       - MQTT_HOST=${MQTT_HOST}
       - AUTO_START=${AUTO_START:-1}
+      - TZ=Europe/London
     restart: unless-stopped
 
 volumes:

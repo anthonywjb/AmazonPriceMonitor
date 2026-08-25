@@ -288,6 +288,7 @@ def publish_discovery(asin, title, threshold, target_met, state_topic, in_stock)
         "json_attributes_topic": attributes_topic,
         "unit_of_measurement": "GBP",
         "device_class": "monetary",
+        "icon": "mdi:tag-check" if target_met else "mdi:tag",
         "availability_topic": state_topic + AVAILABILITY_TOPIC_SUFFIX,
         "payload_available": "online",
         "payload_not_available": "offline",
