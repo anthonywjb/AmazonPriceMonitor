@@ -186,6 +186,71 @@ def add_row():
     except OSError as error:
         flash(CSV_WRITE_ERROR.format(error=error), "error")
         return redirect(url_for("index"))
+
+    try:
+        asin = item_id(url)
+        target_met = new_row.get("TargetMet", "No") == "Yes"
+        in_stock = new_row.get("InStock", "No") == "Yes"
+        name = topic.rstrip("/").rsplit("/", 1)[-1]
+        _mqtt_publish(
+            f"{MQTT_DISCOVERY_PREFIX}/sensor/apm/{asin}/config",
+            json.dumps({
+                "name": name,
+                "object_id": f"apm_{name}",
+                "unique_id": f"apm_{asin}",
+                "state_topic": topic,
+                "json_attributes_topic": f"{topic}/attributes",
+                "unit_of_measurement": "GBP",
+                "device_class": "monetary",
+                "icon": "mdi:tag-check" if target_met else "mdi:tag",
+                "availability_topic": topic + AVAILABILITY_TOPIC_SUFFIX,
+                "payload_available": "online",
+                "payload_not_available": "offline",
+                "device": {
+                    "identifiers": ["apm"],
+                    "name": "APM",
+                    "manufacturer": "Amazon",
+                    "model": "Amazon.co.uk",
+                },
+            }),
+        )
+        _mqtt_publish(
+            f"{MQTT_DISCOVERY_PREFIX}/binary_sensor/apm/{asin}/config",
+            json.dumps({
+                "name": f"{name} in stock",
+                "unique_id": f"apm_{asin}_stock",
+                "object_id": f"apm_{name}_stock",
+                "state_topic": topic + STOCK_TOPIC_SUFFIX,
+                "payload_on": "ON",
+                "payload_off": "OFF",
+                "device": {
+                    "identifiers": ["apm"],
+                    "name": "APM",
+                    "manufacturer": "Amazon",
+                    "model": "Amazon.co.uk",
+                },
+            }),
+        )
+        _mqtt_publish(topic + AVAILABILITY_TOPIC_SUFFIX, "online")
+        _mqtt_publish(
+            topic + STOCK_TOPIC_SUFFIX, "ON" if in_stock else "OFF"
+        )
+        if in_stock:
+            price_str = new_row.get("CurrentPrice", "")
+            if price_str:
+                _mqtt_publish(topic, price_str)
+        _mqtt_publish(
+            f"{topic}/attributes",
+            json.dumps({
+                "title": new_row.get("Title", ""),
+                "threshold": f"{float(threshold):.2f}",
+                "target_met": target_met,
+                "in_stock": "Yes" if in_stock else "No",
+            }),
+        )
+    except Exception:
+        pass
+
     flash("Row added.", "success")
     return redirect(url_for("index"))
 
