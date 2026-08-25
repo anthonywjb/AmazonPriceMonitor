@@ -34,7 +34,6 @@ from price_monitor import (
     get_page_data,
     item_id,
     locked_csv,
-    mqtt_publish,
     read_csv,
     write_csv,
 )
@@ -49,6 +48,22 @@ PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 SCRIPT_PATH = os.path.join(PROJECT_ROOT, "price_monitor.py")
 CONFIG_DIR = os.path.dirname(CSV_PATH) or "."
 PID_PATH = os.path.join(CONFIG_DIR, "monitor.pid")
+
+
+def _mqtt_publish(topic, message):
+    """Publish an MQTT message using the current environment MQTT_HOST."""
+    host = os.environ.get("MQTT_HOST", "")
+    if not host:
+        return
+    command = ["mosquitto_pub", "-h", host, "-t", topic, "-r"]
+    if message:
+        command += ["-m", message]
+    else:
+        command.append("-n")
+    try:
+        subprocess.run(command, check=True, capture_output=True, text=True)
+    except (OSError, subprocess.CalledProcessError):
+        pass
 LOG_PATH = os.path.join(CONFIG_DIR, "monitor.log")
 SETTINGS_PATH = os.path.join(CONFIG_DIR, "settings.json")
 DEFAULT_INTERVAL_MINUTES = 30
@@ -594,14 +609,14 @@ def delete_row(index):
         )
         if topic:
             asin = item_id(url) if url else None
-            mqtt_publish(topic, "")
-            mqtt_publish(topic + AVAILABILITY_TOPIC_SUFFIX, "")
-            mqtt_publish(topic + STOCK_TOPIC_SUFFIX, "")
+            _mqtt_publish(topic, "")
+            _mqtt_publish(topic + AVAILABILITY_TOPIC_SUFFIX, "")
+            _mqtt_publish(topic + STOCK_TOPIC_SUFFIX, "")
             if asin:
-                mqtt_publish(
+                _mqtt_publish(
                     f"{MQTT_DISCOVERY_PREFIX}/sensor/apm/{asin}/config", ""
                 )
-                mqtt_publish(
+                _mqtt_publish(
                     f"{MQTT_DISCOVERY_PREFIX}/binary_sensor/apm/{asin}/config",
                     "",
                 )
