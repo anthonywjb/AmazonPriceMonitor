@@ -9,7 +9,7 @@ everything — no config files to hand-edit.
 
 - Web UI: add products by URL, set a target price, edit/reorder/delete rows
 - Background checker that keeps running on its own (default: every 30 minutes)
-- MQTT publishing with Home Assistant auto-discovery (`price_monitor/…` topics)
+- MQTT publishing with Home Assistant auto-discovery (`apm/…` topics)
 - One-container deployment; your list survives updates and restarts
 - CSV export/import for backups and moving between machines
 
@@ -103,7 +103,7 @@ Open `http://<your-host>:5020`.
 3. Enter your target price as the **Threshold**. When the current price
    drops below this, the item is flagged as *target met*.
 4. Give the MQTT topic a short name in the third box (e.g.
-   `garden_kneeler`). The `price_monitor/` prefix is added for you if
+   `garden_kneeler`). The `apm/` prefix is added for you if
    you leave it off.
 5. Press the **+** button. The product title and current price are
    fetched straight away so you can confirm it found the right item.

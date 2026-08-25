@@ -17,7 +17,7 @@ from curl_cffi import requests as curl_requests
 from curl_cffi.requests.exceptions import RequestException as CurlRequestException
 
 MQTT_HOST = os.environ.get("MQTT_HOST", "").strip()
-MQTT_TOPIC_PREFIX = "price_monitor"
+MQTT_TOPIC_PREFIX = "apm"
 MQTT_DISCOVERY_PREFIX = "homeassistant"
 
 USER_AGENT = (
@@ -282,8 +282,8 @@ def publish_discovery(asin, title, threshold, target_met, state_topic, in_stock)
     attributes_topic = f"{state_topic}/attributes"
     config = {
         "name": name,
-        "object_id": f"price_monitor_{name}",
-        "unique_id": f"price_monitor_{asin}",
+        "object_id": f"apm_{name}",
+        "unique_id": f"apm_{asin}",
         "state_topic": state_topic,
         "json_attributes_topic": attributes_topic,
         "unit_of_measurement": "GBP",
@@ -293,13 +293,13 @@ def publish_discovery(asin, title, threshold, target_met, state_topic, in_stock)
         "payload_available": "online",
         "payload_not_available": "offline",
         "device": {
-            "identifiers": ["price_monitor"],
+            "identifiers": ["apm"],
             "name": "Amazon Price Monitor",
             "manufacturer": "Amazon",
             "model": "Amazon.co.uk",
         },
     }
-    topic = f"{MQTT_DISCOVERY_PREFIX}/sensor/price_monitor/{asin}/config"
+    topic = f"{MQTT_DISCOVERY_PREFIX}/sensor/apm/{asin}/config"
     attributes = {
         "title": title,
         "threshold": f"{threshold:.2f}",
@@ -314,19 +314,19 @@ def publish_stock_discovery(asin, state_topic):
     name = entity_name(state_topic)
     config = {
         "name": f"{name} in stock",
-        "unique_id": f"price_monitor_{asin}_stock",
-        "object_id": f"price_monitor_{name}_stock",
+        "unique_id": f"apm_{asin}_stock",
+        "object_id": f"apm_{name}_stock",
         "state_topic": state_topic + STOCK_TOPIC_SUFFIX,
         "payload_on": "ON",
         "payload_off": "OFF",
         "device": {
-            "identifiers": ["price_monitor"],
+            "identifiers": ["apm"],
             "name": "Amazon Price Monitor",
             "manufacturer": "Amazon",
             "model": "Amazon.co.uk",
         },
     }
-    topic = f"{MQTT_DISCOVERY_PREFIX}/binary_sensor/price_monitor/{asin}/config"
+    topic = f"{MQTT_DISCOVERY_PREFIX}/binary_sensor/apm/{asin}/config"
     mqtt_publish(topic, json.dumps(config))
 
 
