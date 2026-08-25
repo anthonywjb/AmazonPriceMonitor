@@ -60,12 +60,12 @@ Check it arrived: `docker images | grep amazon-price-monitor`
          - "5020:5020"
        volumes:
          - price-monitor-config:/app/config
-        environment:
-          - SECRET_KEY=${SECRET_KEY}
-          - MQTT_HOST=${MQTT_HOST}
-          - AUTO_START=${AUTO_START:-1}
-          - TZ=Europe/London
-        restart: unless-stopped
+       environment:
+         - SECRET_KEY=${SECRET_KEY}
+         - MQTT_HOST=${MQTT_HOST}
+         - AUTO_START=${AUTO_START:-1}
+         - TZ=Europe/London
+       restart: unless-stopped
 
    volumes:
      price-monitor-config:
