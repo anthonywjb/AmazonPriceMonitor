@@ -33,6 +33,16 @@
     .amazon-smile .curve { stroke-width: 2.4; stroke-linecap: round; }
     .amazon-smile .arrow { stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
     .amazon-title { font-size: 1.3rem; font-weight: 400; }
+    .app-version {
+      margin-left: auto;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: #aab7b8;
+      border: 1px solid #3d4d5e;
+      padding: 0.2rem 0.6rem;
+      border-radius: 999px;
+      white-space: nowrap;
+    }
     table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #d5dbdb; }
     th, td { border: 1px solid #d5dbdb; padding: 0.4rem 0.6rem; text-align: left; vertical-align: top; font-size: 0.85rem; }
     th { background: #f0f2f2; color: #0f1111; }
@@ -119,6 +129,7 @@
     @media (max-width: 600px) {
       .amazon-header { flex-direction: column; align-items: flex-start; gap: 0.5rem; }
       .amazon-title { font-size: 1.1rem; }
+      .app-version { margin-left: 0; }
     }
 
     @media (max-width: 720px) {
@@ -202,6 +213,7 @@
       </svg>
     </div>
     <h1 class="amazon-title">Price Monitoring for Home Assistant</h1>
+    <span class="app-version">v{{ version }}</span>
   </header>
 
   <div class="monitor-controls">

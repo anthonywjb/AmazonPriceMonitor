@@ -71,6 +71,8 @@ LOG_PATH = os.path.join(CONFIG_DIR, "monitor.log")
 SETTINGS_PATH = os.path.join(CONFIG_DIR, "settings.json")
 DEFAULT_INTERVAL_MINUTES = 30
 
+APP_VERSION = "1.2"
+
 DISPLAY_NAMES = {
     "MQTTTopic": "MQTT Topic",
 }
@@ -680,7 +682,8 @@ def index():
         fieldnames, rows = [], []
         flash("monitor.csv is missing or has no URL/Threshold columns.", "error")
     return render_template(
-        "index.html", fieldnames=fieldnames, rows=rows, monitor=monitor_status()
+        "index.html", fieldnames=fieldnames, rows=rows, monitor=monitor_status(),
+        version=APP_VERSION,
     )
 
 
