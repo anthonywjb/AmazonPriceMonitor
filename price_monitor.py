@@ -4,9 +4,11 @@ import fcntl
 import hashlib
 import json
 import os
+import random
 import re
 import subprocess
 import sys
+import threading
 import time
 from contextlib import contextmanager
 from datetime import datetime
@@ -186,17 +188,76 @@ FETCH_HEADERS = {"Accept-Language": "en-GB,en;q=0.9"}
 BOT_CHECK_RETRIES = 2
 BOT_CHECK_RETRY_DELAY_SECONDS = 10
 ITEM_DELAY_SECONDS = 5
+WARMUP_INTERVAL_SECONDS = 30 * 60
+
+_session = None
+_session_lock = threading.RLock()
+_last_warmup = 0.0
 
 
-def get_page_data(url):
+def get_session():
+    """Return a shared curl_cffi session with a persistent cookie jar."""
+    global _session
+    with _session_lock:
+        if _session is None:
+            _session = curl_requests.Session(impersonate="chrome")
+            _session.headers.update(FETCH_HEADERS)
+        return _session
+
+
+def warm_up_session(force=False):
+    """Hit the Amazon homepage so later product fetches reuse real cookies.
+
+    The homepage is far less likely to trigger a bot check than a product
+    page, and the cookies it sets make the following product request look
+    like a normal browser navigation rather than a fresh client. Runs at
+    most once every WARMUP_INTERVAL_SECONDS.
+    """
+    global _last_warmup
+    now = time.monotonic()
+    if not force and now - _last_warmup < WARMUP_INTERVAL_SECONDS:
+        return True
+    try:
+        with _session_lock:
+            get_session().get("https://www.amazon.co.uk/", timeout=15)
+        _last_warmup = now
+        return True
+    except Exception:
+        return False
+
+
+def session_get(url, timeout=15):
+    """Perform a single request serialised against other session requests."""
+    with _session_lock:
+        return get_session().get(url, timeout=timeout)
+
+
+def follow_redirect(url, timeout=15):
+    """Resolve a short link (e.g. amzn.eu) to its final URL.
+
+    Streams the reply and closes the connection without downloading the
+    product body, so it is cheap and safe for use in the web request path.
+    Returns the final URL, or None if the request failed.
+    """
+    try:
+        with _session_lock:
+            response = get_session().get(url, timeout=timeout, stream=True)
+            final_url = response.url
+            response.close()
+        return final_url
+    except Exception:
+        return None
+
+
+def get_page_data(url, max_attempts=None, retry_delay=None):
+    attempts = BOT_CHECK_RETRIES + 1 if max_attempts is None else max_attempts
+    delay = BOT_CHECK_RETRY_DELAY_SECONDS if retry_delay is None else retry_delay
+    warm_up_session()
     last_error = None
-    for attempt in range(1 + BOT_CHECK_RETRIES):
-        response = curl_requests.get(
-            url,
-            headers=FETCH_HEADERS,
-            timeout=15,
-            impersonate="chrome",
-        )
+    for attempt in range(attempts):
+        if attempt:
+            time.sleep(delay * random.uniform(0.75, 1.5))
+        response = session_get(url)
         response.raise_for_status()
 
         soup = BeautifulSoup(response.text, "html.parser")
@@ -208,8 +269,6 @@ def get_page_data(url):
             last_error = ValueError(
                 "Amazon bot-check page returned instead of product data"
             )
-            if attempt < BOT_CHECK_RETRIES:
-                time.sleep(BOT_CHECK_RETRY_DELAY_SECONDS)
             continue
 
         if has_out_of_stock_signal(soup):
@@ -372,7 +431,7 @@ def run_checks():
     results = []
     for row_index, row in enumerate(rows):
         if row_index:
-            time.sleep(ITEM_DELAY_SECONDS)
+            time.sleep(ITEM_DELAY_SECONDS * random.uniform(0.75, 1.5))
         url = (row.get("URL") or "").strip()
         if not url:
             print("Error: skipping row with empty URL")
