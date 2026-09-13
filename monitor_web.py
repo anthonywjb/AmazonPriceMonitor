@@ -7,6 +7,7 @@ import secrets
 import signal
 import subprocess
 import sys
+import threading
 import time
 from datetime import datetime
 
@@ -31,10 +32,12 @@ from price_monitor import (
     REQUIRED_COLUMNS,
     STOCK_TOPIC_SUFFIX,
     ensure_columns,
+    follow_redirect,
     get_page_data,
     item_id,
     locked_csv,
     read_csv,
+    warm_up_session,
     write_csv,
 )
 
@@ -114,7 +117,24 @@ def normalize_topic(topic):
     return topic
 
 
+AMAZON_SHORT_LINK_HOSTS = ("amzn.eu", "amzn.to", "amzn.asia", "a.co", "amzn.com")
+
+
+def amazon_short_link(url):
+    match = re.match(r"^[a-z][a-z0-9+.-]*://([^/]+)", url, flags=re.IGNORECASE)
+    if not match:
+        return False
+    host = match.group(1).lower()
+    if host.startswith("www."):
+        host = host[4:]
+    return any(host == short or host.endswith("." + short) for short in AMAZON_SHORT_LINK_HOSTS)
+
+
 def normalize_url(url):
+    if amazon_short_link(url):
+        resolved = follow_redirect(url)
+        if resolved:
+            url = resolved
     match = ASIN_RE.search(url)
     if match:
         return f"https://www.amazon.co.uk/dp/{match.group(1).upper()}/"
@@ -145,52 +165,13 @@ CSV_WRITE_ERROR = (
 )
 
 
-@app.post("/add")
-def add_row():
-    parsed = parse_row_form()
-    if parsed is None:
-        return redirect(url_for("index"))
-    url, threshold, topic = parsed
-
+def publish_added_row(topic, row, threshold):
+    """Publish discovery + state for a web-added row to MQTT."""
     try:
-        with locked_csv(CSV_PATH):
-            fieldnames, rows = load_rows()
-            if fieldnames is None:
-                flash(
-                    "monitor.csv is missing or has no URL/Threshold columns.",
-                    "error",
-                )
-                return redirect(url_for("index"))
-            if any((row.get("URL") or "").strip() == url for row in rows):
-                flash("That URL is already being monitored.", "error")
-                return redirect(url_for("index"))
-
-            new_row = {name: "" for name in fieldnames}
-            new_row["URL"] = url
-            new_row["Threshold"] = threshold
-            new_row["MQTTTopic"] = topic
-            new_row["TargetMet"] = "No"
-            new_row["InStock"] = "No"
-            try:
-                title, price, in_stock = get_page_data(url)
-                new_row["Title"] = title
-                new_row["InStock"] = "Yes" if in_stock else "No"
-                new_row["TimeStamp"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                if in_stock:
-                    new_row["CurrentPrice"] = f"{price:.2f}"
-                    new_row["TargetMet"] = "Yes" if price < float(threshold) else "No"
-            except Exception as error:
-                flash(f"Could not fetch page details: {error}", "error")
-            rows.append(new_row)
-            write_csv(CSV_PATH, fieldnames, rows)
-    except OSError as error:
-        flash(CSV_WRITE_ERROR.format(error=error), "error")
-        return redirect(url_for("index"))
-
-    try:
+        url = (row.get("URL") or "").strip()
         asin = item_id(url)
-        target_met = new_row.get("TargetMet", "No") == "Yes"
-        in_stock = new_row.get("InStock", "No") == "Yes"
+        target_met = row.get("TargetMet", "No") == "Yes"
+        in_stock = row.get("InStock", "No") == "Yes"
         name = topic.rstrip("/").rsplit("/", 1)[-1]
         _mqtt_publish(
             f"{MQTT_DISCOVERY_PREFIX}/sensor/apm/{asin}/config",
@@ -236,13 +217,13 @@ def add_row():
             topic + STOCK_TOPIC_SUFFIX, "ON" if in_stock else "OFF"
         )
         if in_stock:
-            price_str = new_row.get("CurrentPrice", "")
+            price_str = row.get("CurrentPrice", "")
             if price_str:
                 _mqtt_publish(topic, price_str)
         _mqtt_publish(
             f"{topic}/attributes",
             json.dumps({
-                "title": new_row.get("Title", ""),
+                "title": row.get("Title", ""),
                 "threshold": f"{float(threshold):.2f}",
                 "target_met": target_met,
                 "in_stock": "Yes" if in_stock else "No",
@@ -251,7 +232,83 @@ def add_row():
     except Exception:
         pass
 
-    flash("Row added.", "success")
+
+def fetch_and_publish_add(url, threshold, topic):
+    """Fetch details in the background, then update the CSV and MQTT.
+
+    A single, cookie-warmed attempt is used so an add never turns into a
+    rapid 3-request burst. If Amazon blocks it, the row stays in the CSV
+    and the recurring monitor fills in the details later.
+    """
+    try:
+        warm_up_session()
+        title, price, in_stock = get_page_data(url, max_attempts=1)
+    except Exception as error:
+        print(f"Background fetch failed for {url}: {error}", flush=True)
+        return
+    updated = None
+    with locked_csv(CSV_PATH):
+        try:
+            fieldnames, rows = read_csv(CSV_PATH)
+        except FileNotFoundError:
+            return
+        ensure_columns(fieldnames)
+        for row in rows:
+            if (row.get("URL") or "").strip() != url:
+                continue
+            row["Title"] = title
+            row["InStock"] = "Yes" if in_stock else "No"
+            row["TimeStamp"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            if in_stock:
+                row["CurrentPrice"] = f"{price:.2f}"
+                row["TargetMet"] = "Yes" if price < float(threshold) else "No"
+            updated = dict(row)
+            break
+        write_csv(CSV_PATH, fieldnames, rows)
+    if updated is not None:
+        publish_added_row(topic, updated, threshold)
+
+
+@app.post("/add")
+def add_row():
+    parsed = parse_row_form()
+    if parsed is None:
+        return redirect(url_for("index"))
+    url, threshold, topic = parsed
+
+    try:
+        with locked_csv(CSV_PATH):
+            fieldnames, rows = load_rows()
+            if fieldnames is None:
+                flash(
+                    "monitor.csv is missing or has no URL/Threshold columns.",
+                    "error",
+                )
+                return redirect(url_for("index"))
+            if any((row.get("URL") or "").strip() == url for row in rows):
+                flash("That URL is already being monitored.", "error")
+                return redirect(url_for("index"))
+
+            new_row = {name: "" for name in fieldnames}
+            new_row["URL"] = url
+            new_row["Threshold"] = threshold
+            new_row["MQTTTopic"] = topic
+            new_row["TargetMet"] = "No"
+            new_row["InStock"] = "No"
+            rows.append(new_row)
+            write_csv(CSV_PATH, fieldnames, rows)
+    except OSError as error:
+        flash(CSV_WRITE_ERROR.format(error=error), "error")
+        return redirect(url_for("index"))
+
+    publish_added_row(topic, new_row, threshold)
+    threading.Thread(
+        target=fetch_and_publish_add,
+        args=(url, threshold, topic),
+        daemon=True,
+    ).start()
+
+    flash("Row added. Title and price are being fetched in the background.", "success")
     return redirect(url_for("index"))
 
 
@@ -296,7 +353,7 @@ def edit_row(index):
         price_str = ""
         title = ""
         try:
-            title, price, in_stock = get_page_data(url)
+            title, price, in_stock = get_page_data(url, max_attempts=1)
             target_met = in_stock and price < float(threshold)
             if in_stock:
                 price_str = f"{price:.2f}"
