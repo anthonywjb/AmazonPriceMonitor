@@ -252,10 +252,15 @@ def follow_redirect(url, timeout=15):
         return None
 
 
+class BotCheckError(ValueError):
+    """Amazon's bot-check could not be bypassed after every retry."""
+
+
 def get_page_data(url, max_attempts=None, retry_delay=None):
     attempts = BOT_CHECK_RETRIES + 1 if max_attempts is None else max_attempts
     delay = BOT_CHECK_RETRY_DELAY_SECONDS if retry_delay is None else retry_delay
     last_error = None
+    bot_checked = False
     for attempt in range(attempts):
         if attempt:
             time.sleep(delay * random.uniform(0.75, 1.5))
@@ -269,6 +274,7 @@ def get_page_data(url, max_attempts=None, retry_delay=None):
         title = re.sub(r"\s*:\s*Amazon\.co\.uk:.*$", "", title)
 
         if looks_like_bot_check(soup):
+            bot_checked = True
             last_error = ValueError(
                 "Amazon bot-check page returned instead of product data"
             )
@@ -286,6 +292,11 @@ def get_page_data(url, max_attempts=None, retry_delay=None):
         if discount:
             price = max(0.0, round(price - discount, 2))
         return title, price, True
+    if bot_checked:
+        raise BotCheckError(
+            "Amazon bot-check page could not be bypassed after "
+            f"{attempts} attempt(s)"
+        )
     raise last_error
 
 
@@ -306,6 +317,9 @@ def entity_name(topic):
 
 STOCK_TOPIC_SUFFIX = "/stock"
 AVAILABILITY_TOPIC_SUFFIX = "/availability"
+
+ALERT_TOPIC = f"{MQTT_TOPIC_PREFIX}/bot_check"
+ALERT_ATTRIBUTES_TOPIC = f"{ALERT_TOPIC}/attributes"
 
 
 _mqtt_disabled_notice_shown = False
@@ -393,6 +407,47 @@ def publish_stock_discovery(asin, state_topic):
     mqtt_publish(topic, json.dumps(config))
 
 
+def publish_bot_check_discovery():
+    """Create/update the Home Assistant entity for bot-check alerts."""
+    config = {
+        "name": "Amazon bot check",
+        "object_id": "apm_bot_check",
+        "unique_id": "apm_bot_check",
+        "state_topic": ALERT_TOPIC,
+        "json_attributes_topic": ALERT_ATTRIBUTES_TOPIC,
+        "payload_on": "ON",
+        "payload_off": "OFF",
+        "device_class": "problem",
+        "icon": "mdi:shield-alert",
+        "device": {
+            "identifiers": ["apm"],
+            "name": "APM",
+            "manufacturer": "Amazon",
+            "model": "Amazon.co.uk",
+        },
+    }
+    topic = f"{MQTT_DISCOVERY_PREFIX}/binary_sensor/apm/bot_check/config"
+    mqtt_publish(topic, json.dumps(config))
+
+
+def publish_bot_check_alert(blocked_urls):
+    """Publish ON when a pass could not bypass Amazon's bot check.
+
+    ``blocked_urls`` is the list of products that were blocked during the
+    latest pass. An empty list clears the alert (OFF).
+    """
+    publish_bot_check_discovery()
+    blocked = bool(blocked_urls)
+    mqtt_publish(ALERT_TOPIC, "ON" if blocked else "OFF")
+    attributes = {
+        "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "blocked": blocked,
+        "count": len(blocked_urls),
+        "urls": blocked_urls,
+    }
+    mqtt_publish(ALERT_ATTRIBUTES_TOPIC, json.dumps(attributes))
+
+
 LOG_MAX_LINES = 100
 
 
@@ -433,6 +488,7 @@ def run_checks():
         return False
 
     results = []
+    bot_check_urls = []
     for row_index, row in enumerate(rows):
         if row_index:
             time.sleep(ITEM_DELAY_SECONDS * random.uniform(0.75, 1.5))
@@ -450,6 +506,11 @@ def run_checks():
         except KeyError as error:
             print(f"Error: skipping malformed row for {url}: missing column {error}")
             results.append(None)
+            continue
+        except BotCheckError as error:
+            print(f"Error for {url}: {error}")
+            bot_check_urls.append(url)
+            results.append(entry)
             continue
         except (requests.RequestException, CurlRequestException, ValueError) as error:
             print(f"Error for {url}: {error}")
@@ -523,6 +584,16 @@ def run_checks():
                     pass
 
         write_csv(CSV_PATH, fieldnames, fresh_rows)
+
+    try:
+        publish_bot_check_alert(bot_check_urls)
+    except RuntimeError as error:
+        print(f"Error: {error}")
+    if bot_check_urls:
+        print(
+            "ALERT: Amazon bot check could not be bypassed for "
+            f"{len(bot_check_urls)} item(s)"
+        )
 
     return True
 
