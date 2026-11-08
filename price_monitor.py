@@ -188,48 +188,47 @@ FETCH_HEADERS = {"Accept-Language": "en-GB,en;q=0.9"}
 BOT_CHECK_RETRIES = 2
 BOT_CHECK_RETRY_DELAY_SECONDS = 10
 ITEM_DELAY_SECONDS = 5
-WARMUP_INTERVAL_SECONDS = 30 * 60
 
-_session = None
+# curl_cffi's plain "chrome" alias tracks the very latest Chrome build, whose
+# TLS/HTTP2 fingerprint Amazon now rejects with a captcha. Pinning to known
+# good releases (tried in order) keeps product pages loading reliably.
+IMPERSONATE_PROFILES = tuple(
+    profile.strip()
+    for profile in os.environ.get("AMAZON_IMPERSONATE", "").split(",")
+    if profile.strip()
+) or ("chrome120", "chrome110", "safari17_0")
+
 _session_lock = threading.RLock()
-_last_warmup = 0.0
 
 
-def get_session():
-    """Return a shared curl_cffi session with a persistent cookie jar."""
-    global _session
-    with _session_lock:
-        if _session is None:
-            _session = curl_requests.Session(impersonate="chrome")
-            _session.headers.update(FETCH_HEADERS)
-        return _session
+def get_session(impersonate=None):
+    """Return a fresh curl_cffi session impersonating a real browser.
+
+    A new session (and therefore a new cookie jar and connection) is used
+    for every request. Reusing one shared session caused Amazon to start
+    serving bot-check/price-less pages after the first couple of fetches.
+    """
+    session = curl_requests.Session(
+        impersonate=impersonate or IMPERSONATE_PROFILES[0]
+    )
+    session.headers.update(FETCH_HEADERS)
+    return session
 
 
 def warm_up_session(force=False):
-    """Hit the Amazon homepage so later product fetches reuse real cookies.
-
-    The homepage is far less likely to trigger a bot check than a product
-    page, and the cookies it sets make the following product request look
-    like a normal browser navigation rather than a fresh client. Runs at
-    most once every WARMUP_INTERVAL_SECONDS.
-    """
-    global _last_warmup
-    now = time.monotonic()
-    if not force and now - _last_warmup < WARMUP_INTERVAL_SECONDS:
-        return True
-    try:
-        with _session_lock:
-            get_session().get("https://www.amazon.co.uk/", timeout=15)
-        _last_warmup = now
-        return True
-    except Exception:
-        return False
+    """Kept for backwards compatibility; per-request sessions need no warm-up."""
+    return True
 
 
-def session_get(url, timeout=15):
-    """Perform a single request serialised against other session requests."""
+def session_get(url, timeout=15, impersonate=None):
+    """Perform a single request with a fresh browser-impersonating session."""
     with _session_lock:
-        return get_session().get(url, timeout=timeout)
+        session = get_session(impersonate)
+        try:
+            response = session.get(url, timeout=timeout)
+        finally:
+            session.close()
+        return response
 
 
 def follow_redirect(url, timeout=15):
@@ -241,9 +240,13 @@ def follow_redirect(url, timeout=15):
     """
     try:
         with _session_lock:
-            response = get_session().get(url, timeout=timeout, stream=True)
-            final_url = response.url
-            response.close()
+            session = get_session()
+            try:
+                response = session.get(url, timeout=timeout, stream=True)
+                final_url = response.url
+                response.close()
+            finally:
+                session.close()
         return final_url
     except Exception:
         return None
@@ -252,12 +255,12 @@ def follow_redirect(url, timeout=15):
 def get_page_data(url, max_attempts=None, retry_delay=None):
     attempts = BOT_CHECK_RETRIES + 1 if max_attempts is None else max_attempts
     delay = BOT_CHECK_RETRY_DELAY_SECONDS if retry_delay is None else retry_delay
-    warm_up_session()
     last_error = None
     for attempt in range(attempts):
         if attempt:
             time.sleep(delay * random.uniform(0.75, 1.5))
-        response = session_get(url)
+        profile = IMPERSONATE_PROFILES[attempt % len(IMPERSONATE_PROFILES)]
+        response = session_get(url, impersonate=profile)
         response.raise_for_status()
 
         soup = BeautifulSoup(response.text, "html.parser")
@@ -276,7 +279,8 @@ def get_page_data(url, max_attempts=None, retry_delay=None):
 
         price = find_price(soup)
         if price is None:
-            raise ValueError("could not find a price on the page")
+            last_error = ValueError("could not find a price on the page")
+            continue
 
         discount = voucher_discount(soup)
         if discount:
